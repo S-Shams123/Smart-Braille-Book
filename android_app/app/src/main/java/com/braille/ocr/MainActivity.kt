@@ -22,6 +22,10 @@ import com.braille.ocr.databinding.ActivityMainBinding
 import android.view.View
 import android.view.animation.Animation
 import android.view.animation.TranslateAnimation
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.content.Intent
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -29,12 +33,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var imageCapture: ImageCapture? = null
     private lateinit var cameraExecutor: ExecutorService
+    private lateinit var speechRecognizer: SpeechRecognizer
     private val firebaseRef = Firebase.database("https://ocr-smart-braille-book-default-rtdb.firebaseio.com/").reference.child("active_text")
 
     companion object {
         private const val TAG = "MainActivity"
         private const val REQUEST_CODE_PERMISSIONS = 10
-        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+        private val REQUIRED_PERMISSIONS = arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +62,61 @@ class MainActivity : AppCompatActivity() {
                 takePhoto()
             }.start()
         }
+
+        binding.micButton.setOnClickListener {
+            it.animate().scaleX(0.9f).scaleY(0.9f).setDuration(100).withEndAction {
+                it.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                startVoiceRecognition()
+            }.start()
+        }
+
+        initSpeechRecognizer()
         cameraExecutor = Executors.newSingleThreadExecutor()
+    }
+
+    private fun initSpeechRecognizer() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                Log.d(TAG, "Ready for speech")
+                startScanAnimation() // Reuse the scan animation for visual feedback
+            }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {
+                stopScanAnimation()
+            }
+            override fun onError(error: Int) {
+                stopScanAnimation()
+                Log.e(TAG, "Speech Error: $error")
+            }
+            override fun onResults(results: Bundle?) {
+                val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                if (!matches.isNullOrEmpty()) {
+                    val spokenText = matches[0]
+                    Log.d(TAG, "Speech Result: $spokenText")
+                    showResult(spokenText)
+                    uploadToFirebase(spokenText)
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+    }
+
+    private fun startVoiceRecognition() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak now...")
+        }
+        speechRecognizer.startListening(intent)
+    }
+
+    private fun uploadToFirebase(text: String) {
+        firebaseRef.setValue(text)
+            .addOnSuccessListener { Log.d(TAG, "Voice text uploaded to Firebase") }
+            .addOnFailureListener { e -> Log.e(TAG, "Firebase upload failed", e) }
     }
 
     private fun allPermissionsGranted() = REQUIRED_PERMISSIONS.all {
@@ -109,11 +171,7 @@ class MainActivity : AppCompatActivity() {
                 val extracted = visionText.text.trim()
                 Log.d(TAG, "OCR result: $extracted")
                 showResult(extracted)
-                
-                // Send to Firebase Realtime Database
-                firebaseRef.setValue(extracted)
-                    .addOnSuccessListener { Log.d(TAG, "Text uploaded to Firebase") }
-                    .addOnFailureListener { e -> Log.e(TAG, "Firebase upload failed", e) }
+                uploadToFirebase(extracted)
             }
             .addOnFailureListener { e ->
                 stopScanAnimation()
@@ -158,5 +216,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
+        speechRecognizer.destroy()
     }
 }
