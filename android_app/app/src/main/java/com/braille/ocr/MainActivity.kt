@@ -26,6 +26,8 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.content.Intent
+import android.graphics.Rect
+import androidx.camera.core.ImageProxy
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -147,11 +149,11 @@ class MainActivity : AppCompatActivity() {
         val imageCapture = imageCapture ?: return
         imageCapture.takePicture(ContextCompat.getMainExecutor(this), object : ImageCapture.OnImageCapturedCallback() {
             @androidx.annotation.OptIn(ExperimentalGetImage::class)
-            override fun onCaptureSuccess(imageProxy: androidx.camera.core.ImageProxy) {
+            override fun onCaptureSuccess(imageProxy: ImageProxy) {
                 val mediaImage = imageProxy.image
                 if (mediaImage != null) {
                     val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                    processImage(image)
+                    processImage(image, imageProxy)
                 }
                 imageProxy.close()
             }
@@ -162,14 +164,51 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun processImage(image: InputImage) {
+    private fun processImage(image: InputImage, imageProxy: ImageProxy) {
         startScanAnimation()
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 stopScanAnimation()
-                val extracted = visionText.text.trim()
-                Log.d(TAG, "OCR result: $extracted")
+                
+                // Get image dimensions after rotation
+                val rotation = imageProxy.imageInfo.rotationDegrees
+                val isSwapped = rotation == 90 || rotation == 270
+                val imageWidth = if (isSwapped) imageProxy.height else imageProxy.width
+                val imageHeight = if (isSwapped) imageProxy.width else imageProxy.height
+
+                // Get boundary and preview positions
+                val boundaryRect = Rect()
+                binding.recognitionBoundary.getGlobalVisibleRect(boundaryRect)
+                val previewRect = Rect()
+                binding.previewView.getGlobalVisibleRect(previewRect)
+
+                // Calculate boundary ratios relative to preview
+                val leftRatio = (boundaryRect.left - previewRect.left).toFloat() / previewRect.width()
+                val topRatio = (boundaryRect.top - previewRect.top).toFloat() / previewRect.height()
+                val rightRatio = (boundaryRect.right - previewRect.left).toFloat() / previewRect.width()
+                val bottomRatio = (boundaryRect.bottom - previewRect.top).toFloat() / previewRect.height()
+
+                val resultBuilder = StringBuilder()
+                for (block in visionText.textBlocks) {
+                    for (line in block.lines) {
+                        val box = line.boundingBox ?: continue
+                        
+                        // Check if line center is within the boundary
+                        val centerX = (box.left + box.right) / 2f
+                        val centerY = (box.top + box.bottom) / 2f
+                        
+                        val relX = centerX / imageWidth
+                        val relY = centerY / imageHeight
+                        
+                        if (relX in leftRatio..rightRatio && relY in topRatio..bottomRatio) {
+                            resultBuilder.append(line.text).append("\n")
+                        }
+                    }
+                }
+
+                val extracted = resultBuilder.toString().trim()
+                Log.d(TAG, "Filtered OCR result: $extracted")
                 showResult(extracted)
                 uploadToFirebase(extracted)
             }
@@ -183,7 +222,7 @@ class MainActivity : AppCompatActivity() {
         binding.scanLine.visibility = View.VISIBLE
         val animation = TranslateAnimation(
             0f, 0f, 
-            0f, binding.previewView.height.toFloat()
+            0f, binding.recognitionBoundary.height.toFloat()
         ).apply {
             duration = 1500
             repeatCount = Animation.INFINITE

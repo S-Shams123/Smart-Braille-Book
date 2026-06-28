@@ -16,14 +16,27 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Recognition Area Boundary -->
+    <View
+        android:id="@+id/recognitionBoundary"
+        android:layout_width="300dp"
+        android:layout_height="180dp"
+        android:background="@drawable/boundary_selector"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Scanning Line (Animated) -->
     <View
         android:id="@+id/scanLine"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="2dp"
         android:background="@color/accent_blue"
         android:visibility="gone"
-        app:layout_constraintTop_toTopOf="parent" />
+        app:layout_constraintEnd_toEndOf="@id/recognitionBoundary"
+        app:layout_constraintStart_toStartOf="@id/recognitionBoundary"
+        app:layout_constraintTop_toTopOf="@id/recognitionBoundary" />
 
     <com.google.android.material.card.MaterialCardView
         android:id="@+id/resultCard"
